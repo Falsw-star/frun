@@ -197,6 +197,9 @@ async fn handle_run(
     let stdout_tx_stdout = stdout_tx.clone();
     tokio::spawn(async move {
         let mut buf = [0u8; 4096];
+        // stdout has a type of ChildStdout,
+        // which is for child process to write and for this process to read.
+        // so it cannot be flushed from here.
         loop {
             match stdout.read(&mut buf).await {
                 Ok(0) => {
@@ -228,11 +231,16 @@ async fn handle_run(
     let stdout_tx_stderr = stdout_tx.clone();
     tokio::spawn(async move {
         let mut buf = [0u8; 4096];
+        // stderr has a type of ChildStderr,
+        // which is for child process to write and for this process to read.
+        // so it cannot be flushed from here.
         loop {
             match stderr.read(&mut buf).await {
                 Ok(0) => {
                     if let SessionState::Exited(_) = *state_stderr.lock().await {
                         break;
+                        // loop exits when state is Exited and stdout.read returns 0
+                        // (this is a double check)
                     }
                 }
                 Ok(n) => {

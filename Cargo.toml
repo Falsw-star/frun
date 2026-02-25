@@ -2,11 +2,21 @@
 name = "frun"
 version = "0.1.0"
 edition = "2024"
+authors = ["Falsw"]
+description = "The frun is a rust written, lightweight background task manager."
+license = "MIT"
+repository = "https://github.com/Falsw-star/frun"
+
+[[bin]]
+name = "frun"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.102"
 bytes = "1.11.1"
 clap = { version = "4.5.60", features = ["derive"] }
+console = "0.16.2"
+dialoguer = "0.12.0"
 directories = "6.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

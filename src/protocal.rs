@@ -17,7 +17,7 @@ pub enum Request {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Response {
     RunSuccess,
     RunFailed(String),

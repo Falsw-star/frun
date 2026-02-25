@@ -1,5 +1,4 @@
 use std::{sync::Arc, time::Duration};
-use std::io::Write;
 
 use clap::{ArgAction, Parser, Subcommand};
 use frun::{daemon::{DeamonInfo, daemon_running, run_daemon}, get_paths, protocal::{Request, Response}};
@@ -40,31 +39,55 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Run { name, command } => {
 
             let (_, _, res) = send_request(
-                Request::Run { name, command }
+                Request::Run { name: name.clone(), command }
             ).await?;
             match res {
                 Response::RunSuccess => {
-                    println!("Success!");
+                    println!(
+                        "{} {} : '{}'",
+                        "✅",
+                        console::style("Successfully started session").green(),
+                        console::style(name).cyan().bold()
+                    );
                 },
                 Response::RunFailed(msg) => {
-                    println!("Failed to run: {}", msg);
+                    eprintln!(
+                        "{} {} : '{}' : {}",
+                        "❌",
+                        console::style("Failed to run session").red(),
+                        console::style(name).cyan().bold(),
+                        msg
+                    );
                 }
-                _ => anyhow::bail!("Daemon responded with wrong response type")
+                _ => anyhow::bail!(
+                    "{} {} : {:?}",
+                    "❌",
+                    console::style("Daemon responded with wrong response type").red(),
+                    res
+                )
             } Ok(())
         }
         Cmd::Attach { name } => {
 
             let (reader, writer, res) = send_request(
-                Request::Attach { name }
+                Request::Attach { name: name.clone() }
             ).await?;
             match res {
                 Response::ForwardingReady => {
+                    println!("🔗 Attaching to session: '{}'", 
+                        console::style(&name).cyan().bold());
                     start_forwarding(reader, writer).await?;
                 }
                 Response::SessionNotExists => {
-                    println!("Session not exists");
+                    println!("ℹ️ No session named '{}'",
+                        console::style(name).cyan().bold());
                 }
-                _ => anyhow::bail!("Daemon responded with wrong response type")
+                _ => anyhow::bail!(
+                    "{} {} : {:?}",
+                    "❌",
+                    console::style("Daemon responded with wrong response type").red(),
+                    res
+                )
             } Ok(())
         }
         Cmd::List => {
@@ -75,14 +98,21 @@ async fn main() -> anyhow::Result<()> {
             match res {
                 Response::SessionList(list) => {
                     if list.len() == 0 {
-                        println!("There aren't any session created.")
+                        println!("ℹ️ There aren't any session created.")
                     } else {
+                        println!("ℹ️ All {} sessions listed as below:",
+                            console::style(list.len()).blue().bold());
                         for name in &list {
-                            println!("    {}", name);
+                            println!("    {}", console::style(name).cyan().bold());
                         }
                     }
                 }
-                _ => anyhow::bail!("Daemon responded with wrong response type")
+                _ => anyhow::bail!(
+                    "{} {} : {:?}",
+                    "❌",
+                    console::style("Daemon responded with wrong response type").red(),
+                    res
+                )
             } Ok(())
         }
         Cmd::Daemon => {
@@ -96,18 +126,16 @@ async fn main() -> anyhow::Result<()> {
 
             match res {
                 Response::SessionDeletedSafely => {
-                    println!("Process already exited and session deleted safely.")
+                    println!("🗑️ Process already exited and session deleted safely.")
                 }
                 Response::SessionProcessNotExited => {
-                    print!("Process still running! Do you want to exit it forcely? (y): ");
-                    std::io::stdout().flush()?;
-
-                    let mut input = String::new();
-                    std::io::stdin().read_line(&mut input)?;
-
-                    let input = input.trim().to_lowercase();
-                    if input == "y" || input == "yes" {
-
+                    let confirm = dialoguer::Confirm::new()
+                        .with_prompt(format!(
+                            "⚠️  Process in session '{}' is still running! Terminate it forcibly?", 
+                            console::style(&name).cyan().bold()))
+                        .default(false)
+                        .interact()?;
+                    if confirm {
                         let status = std::process::Command::new(std::env::current_exe()?)
                             .args(["delete", &name, "--force"])
                             .status()?;
@@ -116,19 +144,27 @@ async fn main() -> anyhow::Result<()> {
                             std::process::exit(status.code().unwrap_or(1));
                         }
                     } else {
-                        println!("Operation canceled.")
+                        println!("ℹ️ Operation cancelled.")
                     }
                 }
                 Response::SessionDeletedForcely => {
-                    println!("Process terminated and session exited.");
+                    println!("🛑 Process terminated and session '{}' deleted.",
+                        console::style(name).cyan().bold());
                 }
                 Response::SessionDropped => {
-                    println!("Session dropped and process exited unsafely.");
+                    println!("⚠️ Session '{}' dropped and process exited unsafely.",
+                        console::style(name).cyan().bold());
                 }
                 Response::SessionNotExists => {
-                    println!("Session not exists");
+                    println!("ℹ️ No session named '{}'",
+                        console::style(name).cyan().bold());
                 }
-                _ => anyhow::bail!("Daemon responded with wrong response type")
+                _ => anyhow::bail!(
+                    "{} {} : {:?}",
+                    "❌",
+                    console::style("Daemon responded with wrong response type").red(),
+                    res
+                )
             } Ok(())
         }
     }
@@ -244,11 +280,17 @@ async fn get_daemon() -> anyhow::Result<TcpStream> {
             let daemon_info: DeamonInfo = serde_json::from_str(&info_content)?;
 
             let addr = format!("127.0.0.1:{}", daemon_info.port);
-            match TcpStream::connect(addr).await {
+            match TcpStream::connect(&addr).await {
                 Ok(stream) => return Ok(stream),
-                Err(e) => {
+                Err(err) => {
                     if daemon_running(daemon_info.pid).await {
-                        eprintln!("Failed to connect to daemon: {}", e);
+                        eprintln!(
+                            "{} {} '{}' : {}",
+                            "❌",
+                            console::style("Failed to connect to daemon on").red(),
+                            console::style(&addr).bold(),
+                            err
+                        );
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     } else {
                         tokio::fs::remove_file(daemon_info_path).await?;
@@ -262,7 +304,13 @@ async fn get_daemon() -> anyhow::Result<TcpStream> {
         }
     }
 
-    anyhow::bail!("Failed to run after {} retries", MAX_RETRIES);
+    anyhow::bail!(
+        "{} {} {} {}",
+        "❌",
+        console::style("Failed to run after").red(),
+        console::style(MAX_RETRIES).yellow().bold(),
+        console::style("retries.").red(),
+    );
 }
 
 async fn create_daemon_process() -> anyhow::Result<()> {
@@ -283,7 +331,11 @@ async fn create_daemon_process() -> anyhow::Result<()> {
 
     if !daemon_info_path.exists() {
         child.kill().await?;
-        anyhow::bail!("Daemon failed to start")
+        anyhow::bail!(
+            "{} {}",
+            "❌",
+            console::style("Daemon failed to start").red()
+        )
     }
         
     Ok(())
