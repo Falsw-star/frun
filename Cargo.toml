@@ -6,6 +6,9 @@ authors = ["Falsw"]
 description = "The frun is a rust written, lightweight background task manager."
 license = "MIT"
 repository = "https://github.com/Falsw-star/frun"
+exclude = [
+    "test_scripts"
+]
 
 [[bin]]
 name = "frun"
