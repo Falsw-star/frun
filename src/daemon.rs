@@ -65,14 +65,21 @@ pub async fn run_daemon() -> anyhow::Result<()> {
 
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
 
+    tokio::spawn(async move {
+        loop {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    });
+
     loop {
-        let (socket, _) = listener.accept().await?;
-        let sessions_cloned: Sessions = sessions.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_request(socket, sessions_cloned).await {
-                eprintln!("error in handling request: {e}");
-            }
-        });
+        if let Ok((socket, _)) = listener.accept().await {
+            let sessions_cloned: Sessions = sessions.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_request(socket, sessions_cloned).await {
+                    eprintln!("error in handling request: {e}");
+                }
+            });
+        }
     }
 }
 
@@ -91,13 +98,19 @@ async fn handle_request(
 
     match req {
         Request::Run { name, command } => {
-            match handle_run(sessions, name, command).await {
-                Ok(_) => respond(&mut writer, Response::RunSuccess).await,
-                Err(e) => respond(&mut writer, Response::RunFailed(e.to_string())).await
-            };
+            if let Some(session) = sessions.lock().await.get(&name) {
+                respond(&mut writer, Response::SessionNameOccupied(
+                    matches!(*session.state.lock().await, SessionState::Exited(_))
+                )).await;
+            } else {
+                match handle_run(sessions, name, command).await {
+                    Ok(_) => respond(&mut writer, Response::RunSuccess).await,
+                    Err(e) => respond(&mut writer, Response::RunFailed(e.to_string())).await
+                };
+            }
         }
         Request::Attach { name } => {
-            handle_attach(sessions, name, reader, writer).await?;
+            let _ = handle_attach(sessions, name, reader, writer).await;
         }
         Request::List => {
             let session_list: Vec<String> = sessions.lock().await.keys()
@@ -105,7 +118,7 @@ async fn handle_request(
             respond(&mut writer, Response::SessionList(session_list)).await;
         }
         Request::Delete { name, force } => {
-            handle_delete(sessions, name, force, writer).await?;
+            let _ = handle_delete(sessions, name, force, writer).await;
         }
     }
 
@@ -127,7 +140,7 @@ async fn handle_run(
     name: String,
     command: Vec<String>
 ) -> anyhow::Result<()> {
-    
+
     let cmd = &command[0];
     let args = &command[1..];
     let mut child = Command::new(cmd)
@@ -158,6 +171,7 @@ async fn handle_run(
     sessions.lock().await.insert(name, session);
 
     // launch stdin writer task
+    let history_stdin = history.clone();
     tokio::spawn(async move {
         while let Some(data) = stdin_rx.recv().await {
             if let Err(e) = stdin.write_all(&data).await {
@@ -167,6 +181,13 @@ async fn handle_run(
             if let Err(e) = stdin.flush().await {
                 eprintln!("Error flushing stdin: {}", e);
                 break;
+            }
+            {
+                let mut history_guard = history_stdin.lock().await;
+                history_guard.push_back(data.into());
+                if history_guard.len() > 5000 {
+                    history_guard.pop_front();
+                }
             }
         }
         // loop exits when channel is closed

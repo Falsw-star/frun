@@ -21,6 +21,7 @@ pub enum Request {
 pub enum Response {
     RunSuccess,
     RunFailed(String),
+    SessionNameOccupied(bool),
     ForwardingReady,
     SessionNotExists,
     SessionList(Vec<String>),
