@@ -409,7 +409,9 @@ async fn handle_delete(
 pub async fn daemon_running(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        
+        std::path::Path::new(
+            &format!("/proc/{}", pid)
+        ).exists()
     }
     #[cfg(windows)]
     {
